@@ -1,0 +1,10 @@
+{
+  "name": "redner-website",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "javascript-obfuscator ./js --output ./dist/js --compact true --identifier-names-generator hexadecimal --string-array true --string-array-encoding 'base64' --rename-globals true"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "^4.1.1"
+  }
+}
