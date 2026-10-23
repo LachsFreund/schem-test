@@ -33,13 +33,14 @@ const Models = (() => {
     id = id.replace(/^minecraft:/, '');
     if (modelMemo.has(id)) return modelMemo.get(id);
     const p = (async () => {
-      if (id.startsWith('builtin/')) return { textures: {}, elements: null };
+      if (id.startsWith('builtin/')) return { textures: {}, elements: null, builtin: id };
       const j = await Assets.json('models/' + id + '.json');
       if (!j) return null;
       const parent = j.parent ? await loadModel(j.parent) : null;
       return {
         textures: Object.assign({}, parent ? parent.textures : {}, j.textures || {}),
-        elements: j.elements || (parent && parent.elements) || null
+        elements: j.elements || (parent && parent.elements) || null,
+        builtin: (parent && parent.builtin) || null     // z. B. builtin/entity (Truhe, Bett ...)
       };
     })();
     modelMemo.set(id, p);
@@ -47,8 +48,12 @@ const Models = (() => {
   }
 
   function resolveTex(ref, tex) {
+    // Seit 26.x können Texturen Objekte sein: { "sprite": "minecraft:block/glass", "force_translucent": true }
+    const unwrap = r => (r && typeof r === 'object' && typeof r.sprite === 'string') ? r.sprite : r;
     let n = 0;
-    while (typeof ref === 'string' && ref[0] === '#' && n++ < 12) ref = tex[ref.slice(1)];
+    ref = unwrap(ref);
+    if (typeof ref === 'string' && ref[0] !== '#' && ref.indexOf('/') < 0 && tex && tex[ref] !== undefined) ref = '#' + ref;
+    while (typeof ref === 'string' && ref[0] === '#' && n++ < 12) ref = unwrap(tex[ref.slice(1)]);
     if (typeof ref !== 'string' || ref[0] === '#') return null;
     return ref.replace(/^minecraft:/, '');
   }
@@ -144,7 +149,7 @@ const Models = (() => {
   }
 
   /* ---------- Modell -> Quads ---------- */
-  function bake(elements, textures, rx, ry, name, out, fallbackKey) {
+  function bake(elements, textures, rx, ry, name, out, fallbackKey, uvlock) {
     for (const el of elements) {
       const from = el.from, to = el.to;
       const isFull = !el.rotation && from[0] === 0 && from[1] === 0 && from[2] === 0 &&
@@ -193,6 +198,21 @@ const Models = (() => {
         const uv = [];
         for (let i = 0; i < 4; i++) { const s = base[(i - k + 4) % 4]; uv.push(s[0], s[1]); }
 
+        // uvlock: Textur bleibt an der Welt ausgerichtet (nicht mit dem Block mitgedreht)
+        if (uvlock && (rx || ry)) {
+          const ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+          if (Math.max(ax, ay, az) > 0.99) {
+            for (let i = 0; i < 4; i++) {
+              const [px, py, pz] = corners[i];
+              let u, v;
+              if (ay > 0.99) { u = px; v = n[1] > 0 ? pz : 16 - pz; }
+              else if (az > 0.99) { u = n[2] > 0 ? px : 16 - px; v = 16 - py; }
+              else { u = n[0] > 0 ? 16 - pz : pz; v = 16 - py; }
+              uv[i * 2] = u; uv[i * 2 + 1] = v;
+            }
+          }
+        }
+
         out.quads.push({
           p: corners.flat(),
           n,
@@ -239,7 +259,25 @@ const Models = (() => {
   }
 
   /* ---------- Hauptfunktion ---------- */
+  const SPECIAL_RE = /_banner$|_head$|_skull$|_sign$/;
+
   async function build(st) {
+    const out = await buildInner(st);
+    const n = out.name;
+    if (!out.skip && SPECIAL_RE.test(n) && n !== 'piston_head') {
+      // Banner & Köpfe sind Block-Entities: ihr echtes Aussehen erzeugt special.js. Hier nur Auswahl-Box.
+      out.special = true;
+      out.collide = false;
+      out.fullCube = false; out.fullKeys = null;   // nie als "voller Block" behandeln (sonst fehlen Nachbarflächen)
+      out.bounds = /_banner$/.test(n) ? [0.1, 0, 0.1, 0.9, 1, 0.9]
+        : /_sign$/.test(n) ? [0.05, 0.1, 0.05, 0.95, 0.9, 0.95]
+        : /wall/.test(n) ? [0.25, 0.25, 0.25, 0.75, 0.75, 0.75]
+        : [0.25, 0, 0.25, 0.75, 0.5, 0.75];
+    }
+    return out;
+  }
+
+  async function buildInner(st) {
     const name = st.name.replace(/^minecraft:/, '');
     const props = Object.assign({}, DEFAULT_PROPS, st.props || {});
     const out = {
@@ -280,12 +318,16 @@ const Models = (() => {
       return out;
     }
 
+    let emptyModel = false;
     for (const ap of applies) {
       const model = await loadModel(ap.model);
       if (!model) continue;
       const rx = ap.x || 0, ry = ap.y || 0;
       if (model.elements) {
-        bake(model.elements, model.textures, rx, ry, name, out, colorKey);
+        out.hasElements = true;                       // Modell mit echter Geometrie (z. B. Schilder ab 26.x)
+        bake(model.elements, model.textures, rx, ry, name, out, colorKey, !!ap.uvlock);
+      } else if (!model.builtin) {
+        emptyModel = true;        // Modell existiert, hat aber bewusst keine Geometrie (z. B. junge Krugpflanze oben)
       } else {
         // Block-Entities (Truhe, Bett, Schild, ...): einfache Box mit Partikel-Textur
         const tex = resolveTex(model.textures.particle, model.textures) || null;
@@ -296,7 +338,7 @@ const Models = (() => {
         bake([boxElement(box[0], box[1], box[2])], { all: key }, rx, ry, name, out, colorKey);
       }
     }
-    if (!out.quads.length) {
+    if (!out.quads.length && !emptyModel) {
       bake([boxElement([0, 0, 0], [16, 16, 16], true)], { all: colorKey }, 0, 0, name, out, colorKey);
     }
     finish(out);
@@ -344,8 +386,16 @@ const Models = (() => {
     return stateMemo.get(key);
   }
 
+  /** Baut Quads aus selbst erzeugten Elementen (für Banner / Köpfe). */
+  function bakeElements(elements, textures, rx, ry, name) {
+    const out = { quads: [], boxes: [], fullKeys: null };
+    bake(elements, textures, rx, ry, name, out, 'color:888888');
+    return out.quads;
+  }
+
   return {
     resolveState,
+    bakeElements,
     DIRV,
     reset() { modelMemo.clear(); stateMemo = new Map(); }
   };
