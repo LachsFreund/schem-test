@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
+  <!-- Verbindungen schon beim Laden der Seite aufbauen (spart je 100–300 ms später) -->
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
+  <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
   <title>Schematic Viewer</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/login.css">
@@ -23,8 +27,8 @@
   </div>
   <div id="app"></div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="js/payload.js"></script>
-  <script src="js/login.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script defer src="js/payload.js"></script>
+  <script defer src="js/login.js"></script>
 </body>
 </html>
