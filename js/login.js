@@ -26,7 +26,10 @@
   async function decrypt(raw) {
     const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(P.i) }, key, fromB64(P.c));
-    return JSON.parse(dec.decode(plain));
+    if (!P.z) return JSON.parse(dec.decode(plain));
+    if (typeof DecompressionStream === 'undefined') throw new Error('nodecomp');
+    const unpacked = await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+    return JSON.parse(dec.decode(unpacked));
   }
 
   function start(data) {
@@ -75,6 +78,7 @@
       msg('');
       start(data);
     } catch (e) {
+      if (e && e.message === 'nodecomp') { msg('Dieser Browser ist zu alt (DecompressionStream fehlt).'); return; }
       fails++;
       if (fails >= 5) { lockUntil = Date.now() + 30000; fails = 0; }
       msg('Falscher Schlüssel.');
